@@ -25,6 +25,8 @@ import Text.HTML.DOM
 
 import Language
 
+import Debug.Trace
+
 --------------------------------------------------------------------------------
 
 -- | Represents a Google Blockly XML document.
@@ -62,6 +64,12 @@ elementsByName n = elements p
     where p e | elementName e == n = Just e
               | otherwise          = Nothing
 
+-- | Returns all blocks/shadows from given nodes.
+-- Shadows are default blocks which can be included in statements. This function
+-- just makes sure the parser includes them as well as the actual blocks.
+blocksAndShadows :: [Node] -> [Element]
+blocksAndShadows ns = elementsByName "block" ns ++ elementsByName "shadow" ns
+
 -- | Returns the first element with the specified name.
 element :: Name -> [Node] -> Maybe Element
 element n = listToMaybe . elementsByName n
@@ -85,7 +93,7 @@ field n ns = case node "field" n ns of
 values :: Text -> Parser [Node] [Expr]
 values n ns = case node "value" n ns of
     Nothing -> return []
-    Just e  -> mapM parseExpr (elementsByName "block" (elementNodes e))
+    Just e  -> mapM parseExpr (blocksAndShadows (elementNodes e))
 
 -- | Returns the first value with the specified name.
 value :: Text -> Parser [Node] (Maybe Expr)
@@ -95,7 +103,7 @@ statement :: Text -> Parser Element Program
 statement n e = case node "statement" n (elementNodes e) of
     Nothing -> return []
     Just e' -> Prelude.concat <$>
-        mapM parseStmt (elementsByName "block" (elementNodes e'))
+        mapM parseStmt (blocksAndShadows (elementNodes e'))
 
 mutations :: Parser Element (M.Map Name Text)
 mutations e = case element "mutation" (elementNodes e) of
@@ -128,7 +136,7 @@ parseNext :: Parser Element Program
 parseNext e = case element "next" (elementNodes e) of
     Nothing -> return []
     Just e' -> Prelude.concat <$>
-        mapM parseStmt (elementsByName "block" (elementNodes e'))
+        mapM parseStmt (blocksAndShadows (elementNodes e'))
 
 parseVarGet :: Parser Element Expr
 parseVarGet e = do
@@ -216,7 +224,7 @@ parseStmtTy ty = const $ throwE $
 
 -- | Parses a block, including its header.
 parseExpr :: Parser Element Expr
-parseExpr e@(Element {..}) = case M.lookup "id" elementAttributes of
+parseExpr e@Element {..} = case M.lookup "id" elementAttributes of
     Nothing -> throwE $
         "Block " ++ unpack (nameLocalName elementName) ++
         " is missing attribute: id"
@@ -226,7 +234,7 @@ parseExpr e@(Element {..}) = case M.lookup "id" elementAttributes of
 
 -- | Parses a block, including its header.
 parseStmt :: Parser Element Program
-parseStmt e@(Element {..}) = case M.lookup "id" elementAttributes of
+parseStmt e@Element {..} = case M.lookup "id" elementAttributes of
     Nothing -> throwE $
         "Block " ++ unpack (nameLocalName elementName) ++
         " is missing attribute: id"
@@ -236,11 +244,12 @@ parseStmt e@(Element {..}) = case M.lookup "id" elementAttributes of
 
 -- | Parses a Google Blockly document.
 parseDoc :: Parser Element Doc
-parseDoc (Element {..}) = do
+parseDoc Element {..} = do
     ve <- require "Variables section is missing!" $
             element "variables" elementNodes
     vs <- parseVars ve
-    bs <- mapM parseStmt (elementsByName "block" elementNodes) -- TODO: only parse the entry point and ignore everything else
+    bs <- trace ("no. of top level blocks to parse " ++ show (Prelude.length (elementsByName "block" elementNodes))) 
+        (mapM parseStmt (elementsByName "block" elementNodes)) -- TODO: only parse the entry point and ignore everything else
     return $ Doc vs (Prelude.concat bs)
 
 -- | Tries to convert a byte string into a document.

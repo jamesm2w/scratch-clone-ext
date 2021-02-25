@@ -132,15 +132,15 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
         testCase "handles the empty program" $
         isSuccessful (interpret [] []) @?= True
     ,   QC.testProperty "stores values in memory" $ \(x :: Int) ->
-        hasMemory [("x",x)] $ interpret [AssignStmt "x" (ValE x)] []
+        hasMemory [("x", Val x)] $ interpret [AssignStmt "x" (ValE x)] []
     ,   QC.testProperty "loads values from memory" $ \(x :: Int) ->
-        hasMemory [("x",x),("y",x)] $ interpret [AssignStmt "y" (VarE "x")] [("x",x)]
+        hasMemory [("x", Val x), ("y", Val x)] $ interpret [AssignStmt "y" (VarE "x")] [("x", Val x)]
     ,   QC.testProperty "memory only contains one entry per variable after multiple assignments" $
         \(x :: Int) (y :: Int) (z :: Int) ->
             let r = interpret [ AssignStmt "x" (ValE x)
                               , AssignStmt "x" (ValE y)
                               , AssignStmt "x" (ValE z)
-                              ] [("x",0)]
+                              ] [("x", Val 0)]
             in case r of
                 Left _  -> property False
                 Right m -> length (map fst m) ===
@@ -157,9 +157,9 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
     ,   QC.testProperty "interprets arbitrary expressions in assignments" $ \expr ->
         isSuccessful $ interpret [AssignStmt "x" expr] []
     ,   QC.testProperty "implements repeat" $ \(Positive n) ->
-        hasMemory [("x",n)] $ interpret (repeatTest n) [("x", 0)]
+        hasMemory [("x", Val n)] $ interpret (repeatTest n) [("x", Val 0)]
     ,   QC.testProperty "repeat condition can contain arbitrary expressions" $ \expr ->
-        terminates $ interpret (repeatArbitraryTest expr) [("x", 0)]
+        terminates $ interpret (repeatArbitraryTest expr) [("x", Val 0)]
     ,   QC.testProperty "repeat correctly handles exceptions in condition" $ \(x :: Int) ->
              interpret [RepeatStmt (BinOpE Div (ValE x) (ValE 0)) []] []
              === Left DivByZeroError
@@ -175,12 +175,12 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
         .&&. interpret [RepeatStmt (ValE 10) [AssignStmt "y" (VarE "x")]] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "implements if" $ \(Positive n) ->
-        hasMemory [("x",n)] $ interpret (ifTest (ValE 0) n) [("x", 0)]
+        hasMemory [("x", Val n)] $ interpret (ifTest (ValE 0) n) [("x", Val 0)]
     ,   QC.testProperty "if condition can contain arbitrary expressions" $ \(Positive n) expr ->
-        hasMemory [("x",n)] $ interpret (ifTest expr n) [("x", 0)]
+        hasMemory [("x", Val n)] $ interpret (ifTest expr n) [("x", Val 0)]
     ,   QC.testProperty "if condition treats non-zero numbers as true" $
         forAll (arbitrary `suchThat` (/= 0)) $ \(n :: Int) ->
-        hasMemory [("x",n+1)] $ interpret (rawIfTest (ValE n) (n+1)) [("x", 0)]
+        hasMemory [("x",Val $ n+1)] $ interpret (rawIfTest (ValE n) (n+1)) [("x", Val 0)]
     ,   QC.testProperty "if correctly handles exceptions in condition" $ \(x :: Int) ->
              interpret [IfStmt (BinOpE Div (ValE x) (ValE 0)) [] [] []] []
              === Left DivByZeroError
@@ -196,7 +196,7 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
         .&&. interpret [IfStmt (ValE 1) [AssignStmt "y" (VarE "x")] [] []] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "implements else" $ \(Positive n) ->
-        hasMemory [("x",n)] $ interpret (elseTest (ValE 0) n) [("x", 0)]
+        hasMemory [("x", Val n)] $ interpret (elseTest (ValE 0) n) [("x", Val 0)]
     ,   QC.testProperty "else correctly handles exceptions in body" $ \(x :: Int) ->
              interpret [IfStmt (ValE 0) [] [] [AssignStmt "y" (BinOpE Div (ValE x) (ValE 0))]] []
              === Left DivByZeroError
@@ -205,12 +205,12 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
         .&&. interpret [IfStmt (ValE 0) [] [] [AssignStmt "y" (VarE "x")]] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "implements else if" $ \(Positive n) ->
-        hasMemory [("x",n)] $ interpret (ifElseTest (ValE 1) n) [("x", 0)]
+        hasMemory [("x",Val n)] $ interpret (ifElseTest (ValE 1) n) [("x", Val 0)]
     ,   QC.testProperty "else if condition can contain arbitary expressions" $ \(Positive n) expr ->
-        hasMemory [("x",n)] $ interpret (ifElseTest expr n) [("x", 0)]
+        hasMemory [("x",Val n)] $ interpret (ifElseTest expr n) [("x", Val 0)]
     ,   QC.testProperty "else if condition treats non-zero numbers as true" $
         forAll (arbitrary `suchThat` (/= 0)) $ \(n :: Int) ->
-        hasMemory [("x",n+1)] $ interpret (rawIfElseTest (ValE n) (n+1)) [("x", 0)]
+        hasMemory [("x",Val $ n+1)] $ interpret (rawIfElseTest (ValE n) (n+1)) [("x", Val 0)]
     ,   QC.testProperty "else if correctly handles exceptions in condition" $ \(x :: Int) ->
              interpret [IfStmt (ValE 0) [] [(BinOpE Div (ValE x) (ValE 0), [])] []] []
              === Left DivByZeroError
@@ -227,7 +227,7 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
              === Left (UninitialisedMemory "x")
     ,   testGroup "Example programs" [
             QC.testProperty "computes fibonacci numbers" $ \(Positive n) ->
-                hasMemory [("x", fibs !! (n-1))] $ interpret (fib n) [("x",0),("y",0),("z",1)]
+                hasMemory [("x", Val $ fibs !! (n-1))] $ interpret (fib n) [("x",Val 0),("y",Val 0),("z",Val 1)]
         ]
     ]
 

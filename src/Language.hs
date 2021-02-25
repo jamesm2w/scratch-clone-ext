@@ -11,6 +11,16 @@ module Language where
 -- | A program consists of a sequence of statements.
 type Program = [Stmt]
 
+-- | A memory cell is an integer value or a subroutine program to run
+data MemCell = Val Int | SubProgram Program
+    deriving Show
+
+instance Eq MemCell where
+    (==) (Val i) (Val j)  = i == j
+    (==) (SubProgram _) _ = False
+    (==) _ (SubProgram _) = False
+
+
 -- | A program is a sequence of statements.
 data Stmt
     = AssignStmt {

@@ -76,7 +76,56 @@ What I do not think is particularly elegant is the error handling with Either us
 too many auxilliary statements and probably could and should be simplified. However, I want to first create a full implementation, so
 next I will implement the control statement.
 
-### IF (CONTROL) STATEMENT
+### IF (CONTROL) STATEMENT ###
+For the if statement, I first began with a similar `ifLeft` `fromLeft` construction
+which then checks the result is not equal to 0. This indicates true. In this case it
+recursively calls the interpret function with the list of statements - Program - to 
+run. However, if the result of evaluating the expression was 0 - indicative of false
+it calls the internal function  `control` which just takes the list of cases, the on
+false program and the value of memory. It then recurses through the list evaluating
+the "else if" case expressions which is the first element of the tuple. And if the 
+value is truthy then it again recursively calls the main interpret function to exec
+-ute the sub-function, if its false it continues the recursive call. Finally in the
+case that there are no more "else if" cases it finally executes the "else" condition
+program. I had to take special care here, that the value of memory in the recursive
+call was correct. Since only one block of code should ever be executed the memory
+passed should be the same that was passed in and not be changed based upon any execution.
+
+### REPEAT (LOOP) STATEMENT ###
+For the repeat statement I have to first evaluate the statement which gives the
+amount of times to loop. But since that could return an Left value, I used the
+same `isLeft` check for the error value, if there wasn't an error I just called
+the `loop` function which is defined to recursively execute on an amount, taking away one
+until it reaches 1 where it just executes the program once by calling the interpret
+function. However, there was a small issue with if a negative number was entered. 
+It would enter an unbounded iteration taking one away from -1 would never get to 
+one. So instead I added an if statement on the general case for n being positive
+if n was negative then it just returns the memory with nothing changed. 
+To evaluate the value of memory for each recursive call it gets the value from
+a where-bound definition `newMem` which is a call to interpret with the sub-program.
+
+### Improving Either handling. Case Statements & Applicative ###
+The next step I took to further streamline was replacing if statements with case expressions
+which could pattern match for either Left and an error value, and just return that. 
+Or for Right value and then use the value for the next function call. However, this had it's own
+problems. Mainly creating very verbose code which hurt my head to look at. 
+To improve this I decided to look for functions which could abstract some verbosity away by
+applying the value with a context to a function, to get another value in the same context.
+
+I found in some places I could simply use fmap to apply the function to the results. However
+in others I would end up with nesteded contexts (Either Err (Either Err ...)). To fix this I 
+needed to use the `bind` functionality from Monads with the `>>=` operator.
+
+This reduced
+    case exec stmt mem of 
+       Left err     -> Left err                   
+       Right newMem -> interpret program newMem 
+into just
+    exec stmt mem >>= interpret program
+which reads much nicer as "execute statement with memory then inerpret program" than
+"case of executing statement with memory is Left then return Left, if it's Right with value of 
+new memory then repreturn interpret program with new memory."
+
 
 -}------------------------------------------------------------------------------
 
@@ -87,10 +136,12 @@ module Interpreter where
 import Language
 import Data.Either
 
+import Debug.Trace
+
 --------------------------------------------------------------------------------
 
 -- | In our memory, named locations map to values.
-type Memory = [(String, Int)]
+type Memory = [(String, MemCell)]
 
 -- | Enumerates reasons for errors.
 data Err
@@ -99,18 +150,21 @@ data Err
                                         -- exponent was attempted.
     | UninitialisedMemory String        -- ^ Tried to read from a variable
                                         -- that does not exist.
+    | WrongMemoryType String            -- ^ Tried to perform an operation on
+                                        -- a memory cell which had the wrong type
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
+
 -- | Given a program and the initial memory contents, determines
 -- what evaluating the program does to the memory.
 interpret :: Program -> Memory -> Either Err Memory
 interpret [] m = Right m                            -- Base case for the recursion. If the program is empty, we can just successfully return the
                                                     -- current value of the memory, no further changes needed.
-interpret (stmt:program) mem = 
-    case exec stmt mem of 
-        Left err     -> Left err                    -- If the `exec` function returned an error value, stop execution here with that error.
-        Right newMem -> interpret program newMem    -- Else if the new value of memory was returned, recursively move onto executing the next
+interpret (stmt:program) mem = exec stmt mem >>= interpret program
+    --case exec stmt mem of 
+    --   Left err     -> Left err                   -- If the `exec` function returned an error value, stop execution here with that error.
+    --   Right newMem -> interpret program newMem   -- Else if the new value of memory was returned, recursively move onto executing the next
                                                     -- instruction with the new value of memory.
     where
                                                     -- Call the `exec` function with the current statement and value of memory. This returns
@@ -122,18 +176,18 @@ interpret (stmt:program) mem =
         -- or a integer value resulting from the calculation.
         -- For the purposes of boolean operators, only a zero value indicates false.
         apply :: Op -> Int -> Int -> Either Err Int
-        apply Add x y = Right $ (+) x y
-        apply Sub x y = Right $ (-) x y
-        apply Mul x y = Right $ (*) x y
-        apply Div _ 0 = Left DivByZeroError
-        apply Div x y = Right $ x `div` y
-        apply Pow x y = if y < 0 then Left NegativeExponentError else Right $ x ^ y
-        apply Equal x y = if x == y then Right 1 else Right 0
-        apply Neq x y = if x /= y then Right 1 else Right 0
-        apply LessThan x y = if x < y then Right 1 else Right 0
-        apply LessOrEqual x y = if x <= y then Right 1 else Right 0
-        apply GreaterThan x y = if x > y then Right 1 else Right 0
-        apply GreaterOrEqual  x y = if x >= y then Right 1 else Right 0
+        apply Add             x y = Right $ x + y
+        apply Sub             x y = Right $ x - y
+        apply Mul             x y = Right $ x * y
+        apply Div             _ 0 = trace "div by zero" (Left DivByZeroError)
+        apply Div             x y = Right $ x `div` y
+        apply Pow             x y = if y <  0 then Left NegativeExponentError else Right $ x ^ y
+        apply Equal           x y = Right $ fromEnum $ x == y
+        apply Neq             x y = Right $ fromEnum $ x /= y
+        apply LessThan        x y = Right $ fromEnum $ x  < y
+        apply LessOrEqual     x y = Right $ fromEnum $ x <= y
+        apply GreaterThan     x y = Right $ fromEnum $ x  > y
+        apply GreaterOrEqual  x y = Right $ fromEnum $ x >= y
 
         -- | Given an expression type, and a value of memory this will evaluate the expression
         -- returning either an error from an invalid operation or invalid variable expression (e.g.
@@ -143,55 +197,75 @@ interpret (stmt:program) mem =
         eval :: Expr -> Memory -> Either Err Int
         eval   (ValE i)  _ = Right i                      -- In the case that 
         eval   (VarE x) []          = Left $ UninitialisedMemory x
-        eval e@(VarE x) ((n, v):ms) | x == n    = Right v
-                                    | otherwise = eval e ms
-        eval   (BinOpE op x y) ms   = 
-            case eval x ms of
-                Left evalError -> Left evalError
-                Right valueX   -> 
-                    case eval y ms of
-                        Left evalError -> Left evalError
-                        Right valueY   -> apply op valueX valueY --if isEvalError then Left evalError else apply op valueX valueY
+        eval e@(VarE x) ((n, Val v):ms) | x == n    = Right v
+                                        | otherwise = eval e ms
+        -- Subroutine support.
+        eval (VarE _) ((n, SubProgram _):_) = Left $ WrongMemoryType $ n ++ " of type SubProgram not Value"
+        
+        -- | 
+        eval   (BinOpE op x y) ms   = do valX <- eval x ms
+                                         valY <- eval y ms
+                                         apply op valX valY
+            -- eval x ms >>= (\v -> eval y ms >>= apply op v)
+            --case eval x ms of
+            --    Left evalError -> Left evalError
+            --    Right valueX   -> 
+            --        case eval y ms of
+            --            Left evalError -> Left evalError
+            --            Right valueY   -> apply op valueX valueY --if isEvalError then Left evalError else apply op valueX valueY
 
         -- Executes a statement
         exec :: Stmt -> Memory -> Either Err Memory
-        exec (AssignStmt n e) m = 
-            case eval e m of
-                Left  evalError  -> Left    evalError
-                Right value      -> Right $ assign n value m -- if isExprError then Left exprError else Right $ assign' n exprValue m
-            where                
+        exec (AssignStmt n e) m = do x <- eval e m
+                                     return $ assign n x m
+            -- (\x -> assign n x m) <$> eval e m
+            --case eval e m of
+            --    Left  evalError  -> Left    evalError
+            --    Right value      -> Right $ assign n value m -- if isExprError then Left exprError else Right $ assign' n exprValue m
+            where
                 assign :: String -> Int -> Memory -> Memory
-                assign vn i []            = [(vn, i)]
-                assign vn i ((cn, cv):cs) | vn == cn  = (vn, i)  : cs 
+                assign vn i []            = [(vn, Val i)]                   -- subroutine support
+                assign vn i ((cn, cv):cs) | vn == cn  = (vn, Val i)  : cs 
                                           | otherwise = (cn, cv) : assign vn i cs
 
         -- Executing an IF statement with a predicate, true program, case predicate + program list and false program
-        exec (IfStmt predicate t cs f) m = 
-            case eval predicate m of
-                Left  e -> Left e
-                Right 0 -> control cs f m --if isPredError then Left predError else control isPredTruthy t cs f m
-                Right _ -> interpret t m
+        exec (IfStmt predicate t cs f) m = control ((predicate, t):cs) f m
+            --case eval predicate m of
+            --    Left  e -> Left e
+            --    Right 0 -> control cs f m --if isPredError then Left predError else control isPredTruthy t cs f m
+            --    Right _ -> interpret t m
             where
                 -- Control takes a list of programs to run and a program to run if false then memory 
                 control :: [(Expr, Program)] -> Program -> Memory -> Either Err Memory
                 control [] onFalse progMem = interpret onFalse progMem
-                control ((expr, onCaseTrue):cases) onFalse progMem = 
-                    case eval expr progMem of
-                        Left  e -> Left e
-                        Right 0 -> control cases onFalse progMem
-                        Right _ -> interpret onCaseTrue progMem
+                control ((expr, onCaseTrue):cases) onFalse progMem = eval expr progMem >>= (\x -> 
+                    if x == 0 
+                        then 
+                            control cases onFalse progMem 
+                        else 
+                            interpret onCaseTrue progMem
+                    )
+                    --case eval expr progMem of
+                    --    Left  e -> Left e
+                    --    Right 0 -> control cases onFalse progMem
+                    --    Right _ -> interpret onCaseTrue progMem
 
-        -- Executing a FOR statement. Repeats a program amount times.
-        exec (RepeatStmt amountExpr prog) m = 
-            case eval amountExpr m of 
-                Left e -> Left e
-                Right amount -> loop amount prog m --if isAmountError then Left amountError else loop amount prog m
+        -- Executing a REPEAT statement. Repeats a program amount times.
+        exec (RepeatStmt amountExpr prog) m = do
+                                                 x <- eval amountExpr m 
+                                                 --traceM ("repeat " ++ show x)
+                                                 loop x prog m
+            
+            --eval amountExpr m >>= (\x -> loop x prog m)
+            --case eval amountExpr m of 
+            --    Left e -> Left e
+            --    Right amount -> loop amount prog m --if isAmountError then Left amountError else loop amount prog m
             where
                 loop :: Int -> Program -> Memory -> Either Err Memory
-                loop 1 p progMem = interpret p progMem
-                loop n p progMem = if n > 0 then loop (n - 1) p nextMem else Right progMem
-                    where
-                        nextMem = fromRight [] res 
-                        res = interpret p progMem
+                loop 0 _ progMem = Right progMem
+                loop n p progMem = if n < 0 then Right progMem else do
+                                      nMem <- interpret p progMem
+                                      --traceM ("result of loop " ++ show nMem)
+                                      loop (n - 1) p nMem
 
 --------------------------------------------------------------------------------
