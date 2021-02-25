@@ -18,11 +18,22 @@ import Interpreter
 --------------------------------------------------------------------------------
 
 instance NFData Err where
-
 deriving instance Generic Err
 
+instance NFData MemCell where
+deriving instance Generic MemCell
+
+instance NFData Stmt where
+deriving instance Generic Stmt
+
+instance NFData Expr where
+deriving instance Generic Expr
+
+instance NFData Op where
+deriving instance Generic Op
+
 memory :: Int -> Memory
-memory n = [('x' : show i,i) | i <- [0..n]]
+memory n = [('x' : show i, Val i) | i <- [0..n]]
 
 readProgram :: Int -> Program
 readProgram n = [ AssignStmt name (VarE name) ]

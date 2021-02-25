@@ -13,12 +13,7 @@ type Program = [Stmt]
 
 -- | A memory cell is an integer value or a subroutine program to run
 data MemCell = Val Int | SubProgram Program
-    deriving Show
-
-instance Eq MemCell where
-    (==) (Val i) (Val j)  = i == j
-    (==) (SubProgram _) _ = False
-    (==) _ (SubProgram _) = False
+    deriving (Eq, Show)
 
 
 -- | A program is a sequence of statements.
@@ -37,7 +32,7 @@ data Stmt
         repeatTimesExpr :: Expr,
         repeatBody      :: [Stmt]
     }
-    deriving Show
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -61,6 +56,6 @@ data Expr
     = ValE Int
     | VarE String
     | BinOpE Op Expr Expr
-    deriving Show
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
