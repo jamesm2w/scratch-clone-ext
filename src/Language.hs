@@ -12,7 +12,7 @@ module Language where
 type Program = [Stmt]
 
 -- | A memory cell is an integer value or a subroutine program to run
-data MemCell = Val Int | SubProgram Program
+data MemCell = Val Int | SubProgram Stmt
     deriving (Eq, Show)
 
 
@@ -31,6 +31,17 @@ data Stmt
     | RepeatStmt {
         repeatTimesExpr :: Expr,
         repeatBody      :: [Stmt]
+    }
+    | DefSubroutine {
+        routineName    :: String,
+        routineProgram :: Program
+    }
+    | CallSubroutine {
+        subName  :: String,
+        subInput :: [(String, Expr)]
+    }
+    | SubroutineReturn {
+        returnValue :: Expr
     }
     deriving (Eq, Show)
 
@@ -56,6 +67,7 @@ data Expr
     = ValE Int
     | VarE String
     | BinOpE Op Expr Expr
+    | CallFunction String [(String, Expr)]
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------

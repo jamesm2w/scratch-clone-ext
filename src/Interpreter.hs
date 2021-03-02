@@ -129,14 +129,13 @@ new memory then repreturn interpret program with new memory."
 
 -}------------------------------------------------------------------------------
 
+{-# LANGUAGE TupleSections #-}
+
 module Interpreter where
 
 --------------------------------------------------------------------------------
 
 import Language
-import Data.Either
-
-import Debug.Trace
 
 --------------------------------------------------------------------------------
 
@@ -152,7 +151,14 @@ data Err
                                         -- that does not exist.
     | WrongMemoryType String            -- ^ Tried to perform an operation on
                                         -- a memory cell which had the wrong type
+    | FinishedExecutionError            -- ^ The program has finished execution 
+                                        -- and shouldn't do anything further.
     deriving (Eq, Show)
+
+appendError :: Err -> String -> Err
+appendError (UninitialisedMemory x) xs = UninitialisedMemory $ x ++ xs
+appendError (WrongMemoryType x) xs = WrongMemoryType $ x ++ xs
+appendError err _ = err
 
 --------------------------------------------------------------------------------
 
@@ -161,111 +167,133 @@ data Err
 interpret :: Program -> Memory -> Either Err Memory
 interpret [] m = Right m                            -- Base case for the recursion. If the program is empty, we can just successfully return the
                                                     -- current value of the memory, no further changes needed.
-interpret (stmt:program) mem = exec stmt mem >>= interpret program
+interpret (stmt:program) mem   = exec stmt mem >>= interpret program
     --case exec stmt mem of 
     --   Left err     -> Left err                   -- If the `exec` function returned an error value, stop execution here with that error.
     --   Right newMem -> interpret program newMem   -- Else if the new value of memory was returned, recursively move onto executing the next
                                                     -- instruction with the new value of memory.
-    where
+
                                                     -- Call the `exec` function with the current statement and value of memory. This returns
                                                     -- Either an error because of an invalid expression or a new value for memory which has 
                                                     -- been changed as a result of the statement.
         
-        -- | Given a binary operator type, and two operands, applies the operator the
-        -- operands returning Either an error value because of an invalid operation
-        -- or a integer value resulting from the calculation.
-        -- For the purposes of boolean operators, only a zero value indicates false.
-        apply :: Op -> Int -> Int -> Either Err Int
-        apply Add             x y = Right $ x + y
-        apply Sub             x y = Right $ x - y
-        apply Mul             x y = Right $ x * y
-        apply Div             _ 0 = trace "div by zero" (Left DivByZeroError)
-        apply Div             x y = Right $ x `div` y
-        apply Pow             x y = if y <  0 then Left NegativeExponentError else Right $ x ^ y
-        apply Equal           x y = Right $ fromEnum $ x == y
-        apply Neq             x y = Right $ fromEnum $ x /= y
-        apply LessThan        x y = Right $ fromEnum $ x  < y
-        apply LessOrEqual     x y = Right $ fromEnum $ x <= y
-        apply GreaterThan     x y = Right $ fromEnum $ x  > y
-        apply GreaterOrEqual  x y = Right $ fromEnum $ x >= y
+-- | Given a binary operator type, and two operands, applies the operator the
+-- operands returning Either an error value because of an invalid operation
+-- or a integer value resulting from the calculation.
+-- For the purposes of boolean operators, only a zero value indicates false.
+apply :: Op -> Int -> Int -> Either Err Int
+apply Add             x y = Right $ x + y
+apply Sub             x y = Right $ x - y
+apply Mul             x y = Right $ x * y
+apply Div             _ 0 = Left DivByZeroError
+apply Div             x y = Right $ x `div` y
+apply Pow             x y = if y <  0 then Left NegativeExponentError else Right $ x ^ y
+apply Equal           x y = Right $ fromEnum $ x == y
+apply Neq             x y = Right $ fromEnum $ x /= y
+apply LessThan        x y = Right $ fromEnum $ x  < y
+apply LessOrEqual     x y = Right $ fromEnum $ x <= y
+apply GreaterThan     x y = Right $ fromEnum $ x  > y
+apply GreaterOrEqual  x y = Right $ fromEnum $ x >= y
 
-        -- | Given an expression type, and a value of memory this will evaluate the expression
-        -- returning either an error from an invalid operation or invalid variable expression (e.g.
-        -- trying to read a value which does not exist), or it returns an integer value resulting
-        -- from the expression. 
-        -- For the purposes of boolean operations, only a zero value indicated false.
-        eval :: Expr -> Memory -> Either Err Int
-        eval   (ValE i)  _ = Right i                      -- In the case that 
-        eval   (VarE x) []          = Left $ UninitialisedMemory x
-        eval e@(VarE x) ((n, Val v):ms) | x == n    = Right v
-                                        | otherwise = eval e ms
-        -- Subroutine support.
-        eval (VarE _) ((n, SubProgram _):_) = Left $ WrongMemoryType $ n ++ " of type SubProgram not Value"
+-- | Given an expression type, and a value of memory this will evaluate the expression
+-- returning either an error from an invalid operation or invalid variable expression (e.g.
+-- trying to read a value which does not exist), or it returns an integer value resulting
+-- from the expression. 
+-- For the purposes of boolean operations, only a zero value indicated false.
+eval :: Expr -> Memory -> Either Err Int
+eval   (ValE i)  _ = Right i                      -- In the case that 
+
+-- | Evaluate a variable expression (fetches a variable from memory)
+eval   (VarE x) []                     = Left $ UninitialisedMemory x
+eval e@(VarE x) ((n, Val v) : ms)      | x == n    = Right v
+                                       | otherwise = eval e ms
+eval e@(VarE x) ((n, SubProgram _):ms) | x == n    = Left $ WrongMemoryType $ n ++ " is of type SubProgram not Value"
+                                       | otherwise = eval e ms
+
+-- | Evaluate a binary operator (+, -, /, *, etc.)
+eval   (BinOpE op x y) ms   = do valX <- eval x ms
+                                 valY <- eval y ms
+                                 apply op valX valY
+
+-- | Evaluate a call to a subroutine function which returns a value. Basically loops through memory trying to find
+-- the subroutine cell. If found it calls interpret on the subroutine and then inspects the memory for the return variable.
+-- the subroutine call should be accompanied by some memory which will be the memory for the subroutine's local working.
+eval (CallFunction name inputs) progMem = 
+    do 
+        let inputStatements = [AssignStmt n e | (n, e) <- inputs]
+        subprog <- findProgramCell ((name ==) . fst) progMem
+        memory  <- interpret inputStatements progMem
+        memory' <- exec subprog memory
+        eval (VarE "subroutine_return") memory'
+    where
+        findProgramCell :: ((String, MemCell) -> Bool) -> Memory -> Either Err Stmt
+        findProgramCell _ [] = Left $ UninitialisedMemory name
+        findProgramCell p ((_, Val _):xs) = findProgramCell p xs
+        findProgramCell p (n@(_, SubProgram r):xs) = if p n then Right r else findProgramCell p xs
+
+-- Executes a statement
+exec :: Stmt -> Memory -> Either Err Memory
+exec (AssignStmt n e) m = 
+    do 
+        x <- eval e m
+        return $ assign n x m
+    where
+        assign :: String -> Int -> Memory -> Memory
+        assign vn i []              = [(vn, Val i)]                   
+        assign vn i ((cn, cv) : cs) | vn == cn  = (vn, Val i)  : cs 
+                                    | otherwise = (cn, cv) : assign vn i cs
+
+-- Executing an IF statement with a predicate, true program, case predicate + program list and false program
+exec (IfStmt predicate t cs f) m = control ((predicate, t):cs) f m
+    where
+        -- Control takes a list of programs to run and a program to run if false then memory 
+        control :: [(Expr, Program)] -> Program -> Memory -> Either Err Memory
+        control [] onFalse progMem = interpret onFalse progMem
+        control ((expr, onCaseTrue):cases) onFalse progMem = eval expr progMem >>= (\x -> 
+            if x == 0 
+                then 
+                    control cases onFalse progMem 
+                else 
+                    interpret onCaseTrue progMem
+            )
+
+-- Executing a REPEAT statement. Repeats a program amount times.
+exec (RepeatStmt amountExpr prog) m = 
+    do
+        x <- eval amountExpr m 
+        --traceM ("repeat " ++ show x)
+        loop x prog m
+    where
+        loop :: Int -> Program -> Memory -> Either Err Memory
+        loop 0 _ progMem = Right progMem
+        loop n p progMem = 
+            if n < 0 then
+                Right progMem 
+            else do
+                nMem <- interpret p progMem
+                loop (n - 1) p nMem
+
+-- | Runs subroutine with given name, program and memory
+exec (DefSubroutine name prog) m = case interpret prog m of
+    Left  err -> Left $ appendError err $ " in subroutine " ++ name
+    Right mem -> Right mem
+
+-- | Executes a call to a subroutine which doesn't return a value... wait whats the point of this?
+-- Perhaps have this be a procedure which uses global memory?
+exec (CallSubroutine name inputs) progMem = 
+    do 
+        let inputStatements = [AssignStmt n e | (n, e) <- inputs]
+        subprog <- findProgramCell ((name ==) . fst) progMem
         
-        -- | 
-        eval   (BinOpE op x y) ms   = do valX <- eval x ms
-                                         valY <- eval y ms
-                                         apply op valX valY
-            -- eval x ms >>= (\v -> eval y ms >>= apply op v)
-            --case eval x ms of
-            --    Left evalError -> Left evalError
-            --    Right valueX   -> 
-            --        case eval y ms of
-            --            Left evalError -> Left evalError
-            --            Right valueY   -> apply op valueX valueY --if isEvalError then Left evalError else apply op valueX valueY
+        memory <- interpret inputStatements progMem
+        exec subprog memory
+    where
+        findProgramCell :: ((String, MemCell) -> Bool) -> Memory -> Either Err Stmt
+        findProgramCell _ [] = Left $ UninitialisedMemory name
+        findProgramCell p ((_, Val _):xs) = findProgramCell p xs
+        findProgramCell p (n@(_, SubProgram r):xs) = if p n then Right r else findProgramCell p xs
 
-        -- Executes a statement
-        exec :: Stmt -> Memory -> Either Err Memory
-        exec (AssignStmt n e) m = do x <- eval e m
-                                     return $ assign n x m
-            -- (\x -> assign n x m) <$> eval e m
-            --case eval e m of
-            --    Left  evalError  -> Left    evalError
-            --    Right value      -> Right $ assign n value m -- if isExprError then Left exprError else Right $ assign' n exprValue m
-            where
-                assign :: String -> Int -> Memory -> Memory
-                assign vn i []            = [(vn, Val i)]                   -- subroutine support
-                assign vn i ((cn, cv):cs) | vn == cn  = (vn, Val i)  : cs 
-                                          | otherwise = (cn, cv) : assign vn i cs
-
-        -- Executing an IF statement with a predicate, true program, case predicate + program list and false program
-        exec (IfStmt predicate t cs f) m = control ((predicate, t):cs) f m
-            --case eval predicate m of
-            --    Left  e -> Left e
-            --    Right 0 -> control cs f m --if isPredError then Left predError else control isPredTruthy t cs f m
-            --    Right _ -> interpret t m
-            where
-                -- Control takes a list of programs to run and a program to run if false then memory 
-                control :: [(Expr, Program)] -> Program -> Memory -> Either Err Memory
-                control [] onFalse progMem = interpret onFalse progMem
-                control ((expr, onCaseTrue):cases) onFalse progMem = eval expr progMem >>= (\x -> 
-                    if x == 0 
-                        then 
-                            control cases onFalse progMem 
-                        else 
-                            interpret onCaseTrue progMem
-                    )
-                    --case eval expr progMem of
-                    --    Left  e -> Left e
-                    --    Right 0 -> control cases onFalse progMem
-                    --    Right _ -> interpret onCaseTrue progMem
-
-        -- Executing a REPEAT statement. Repeats a program amount times.
-        exec (RepeatStmt amountExpr prog) m = do
-                                                 x <- eval amountExpr m 
-                                                 --traceM ("repeat " ++ show x)
-                                                 loop x prog m
-            
-            --eval amountExpr m >>= (\x -> loop x prog m)
-            --case eval amountExpr m of 
-            --    Left e -> Left e
-            --    Right amount -> loop amount prog m --if isAmountError then Left amountError else loop amount prog m
-            where
-                loop :: Int -> Program -> Memory -> Either Err Memory
-                loop 0 _ progMem = Right progMem
-                loop n p progMem = if n < 0 then Right progMem else do
-                                      nMem <- interpret p progMem
-                                      --traceM ("result of loop " ++ show nMem)
-                                      loop (n - 1) p nMem
+-- | Returns from a subroutine execution with an expression
+exec (SubroutineReturn e) mem = exec (AssignStmt "subroutine_return" e) mem
 
 --------------------------------------------------------------------------------

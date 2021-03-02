@@ -32,8 +32,9 @@ import Debug.Trace
 
 -- | Represents a Google Blockly XML document.
 data Doc = Doc {
-    docVars    :: [String],  -- ^ A list of variable names.
-    docProgram :: Program    -- ^ The program.
+    docVars        :: [String],           -- ^ A list of variable names.
+    docProgram     :: Program,            -- ^ The program.
+    docSubroutines :: [(String, Stmt)] -- ^ Any attached subroutines to the program
 } deriving Show
 
 --------------------------------------------------------------------------------
@@ -70,6 +71,23 @@ elementsByName n = elements p
 -- just makes sure the parser includes them as well as the actual blocks.
 blocksAndShadows :: [Node] -> [Element]
 blocksAndShadows ns = elementsByName "block" ns ++ elementsByName "shadow" ns
+
+-- | Returns all the start elements. That is all blocks with a type=entry_point
+startElements :: [Node] -> [Element]
+startElements ns = Prelude.filter 
+    (\Element{..} -> case M.lookup "type" elementAttributes of 
+        Just "entry_point" -> True 
+        _ -> False )
+    (elementsByName "block" ns)
+
+-- | Returns all blocks which define proceudres.
+procedureElements :: [Node] -> [Element]
+procedureElements ns = Prelude.filter 
+    (\Element{..} -> case M.lookup "type" elementAttributes of
+        Just "procedures_defnoreturn" -> True
+        Just "procedures_defreturn" -> True
+        _ -> False )
+    (elementsByName "block" ns)
 
 -- | Returns the first element with the specified name.
 element :: Name -> [Node] -> Maybe Element
@@ -124,13 +142,13 @@ force ex m = m >>= require ex
 
 -- | Parses a single global variable.
 parseVar :: Parser Element String
-parseVar (Element {..}) = do
+parseVar Element {..} = do
         v <- content elementNodes
         return (unpack v)
 
 -- | Parses the global variables section.
 parseVars :: Parser Element [String]
-parseVars (Element {..}) =
+parseVars Element {..} =
     mapM parseVar (elementsByName "variable" elementNodes)
 
 parseNext :: Parser Element Program
@@ -205,14 +223,93 @@ parseControlIf e = do
     p <- parseNext e
     return $ IfStmt cond blk alts els : p
 
+-- | Parses a call to a subroutine which would return a function.
+-- This evaluates all exprs passed as arguments as well.
+parseCallReturn :: Parser Element Expr
+parseCallReturn e = do
+    let mutators = elementsByName "mutation" (elementNodes e)
+    let subname = mapM (\x -> unpack <$> M.lookup "name" (elementAttributes x)) mutators
+    name <- case subname of
+        Nothing    -> throwE "Subroutine name is undefined."
+        Just []    -> throwE "Subroutine name is undefined."
+        Just (x:_) -> return x
+
+    let args = elementsByName "arg" (elementNodes $ Prelude.head mutators)
+    let argNames = fromMaybe [] $ mapM (\x -> unpack <$> M.lookup "name" (elementAttributes x)) args
+    let argValues = Prelude.concat $
+         mapM (elementsByName "block" . elementNodes) $ elementsByName "value" (elementNodes e)
+
+    argExprs <- mapM parseExpr argValues
+
+    when (Prelude.length args /= Prelude.length argNames) $ 
+        throwE $ "Number of arguments don't match parameters in " ++ name
+        
+    let xs = Prelude.zip argNames argExprs
+    --traceM $ "cr: " ++ show name
+    --traceM $ "xs: " ++ show xs
+    return $ CallFunction name xs
+
+-- TODO: this.
+parseDefSubroutine :: Parser Element Stmt
+parseDefSubroutine e = do
+    name <- field "NAME" (elementNodes e)
+    let stack = filterM (\x -> M.lookup "name" (elementAttributes x) >>= (\y -> Just $ unpack y == "STACK")) (elementsByName "statement" (elementNodes e))
+    
+    stmts <- case stack of
+        Nothing -> pure []
+        Just [] -> pure []
+        Just (x:_) -> mapM parseStmt (blocksAndShadows (elementNodes x)) 
+
+    --traceM $ show stmts
+    retE <- value "RETURN" (elementNodes e)
+    ret <- case retE of 
+        Nothing -> pure []
+        Just expr -> pure [SubroutineReturn expr]
+
+    return $ DefSubroutine (unpack name) $ Prelude.concat stmts ++ ret
+
+-- TODO: this.
+parseCallNoReturn :: Parser Element Program
+parseCallNoReturn e = do
+    let mutators = elementsByName "mutation" (elementNodes e)
+    let subname = mapM (\x -> unpack <$> M.lookup "name" (elementAttributes x)) mutators
+    name <- case subname of
+        Nothing    -> throwE "Subroutine name is undefined."
+        Just []    -> throwE "Subroutine name is undefined."
+        Just (x:_) -> return x
+
+    let args = elementsByName "arg" (elementNodes $ Prelude.head mutators)
+    let argNames = fromMaybe [] $ mapM (\x -> unpack <$> M.lookup "name" (elementAttributes x)) args
+    let argValues = Prelude.concat $
+         mapM (elementsByName "block" . elementNodes) $ elementsByName "value" (elementNodes e)
+
+    argExprs <- mapM parseExpr argValues
+
+    when (Prelude.length args /= Prelude.length argNames) $ 
+        throwE $ "Number of arguments don't match parameters in " ++ name    
+    let xs = Prelude.zip argNames argExprs
+
+    --traceM $ "cnr: " ++ show name
+    --traceM $ "xs: " ++ show xs
+    p <- parseNext e
+    return $ CallSubroutine name xs : p
+
+-- TODO: this.
+parseReturnStmt :: Parser Element Program
+parseReturnStmt e = do
+
+    p <- parseNext e
+    return $ SubroutineReturn (ValE 0) : p
+
 -- | Parses the body of an expression block.
 parseExprTy :: Text -> Parser Element Expr
-parseExprTy "math_number"     = parseMathNumber
-parseExprTy "math_arithmetic" = parseBinOp
-parseExprTy "logic_compare"   = parseBinOp
-parseExprTy "variables_get"   = parseVarGet
+parseExprTy "math_number"           = parseMathNumber
+parseExprTy "math_arithmetic"       = parseBinOp
+parseExprTy "logic_compare"         = parseBinOp
+parseExprTy "variables_get"         = parseVarGet
+parseExprTy "procedures_callreturn" = parseCallReturn
 parseExprTy ty                = const $ throwE $
-    "Unknown block type: " ++ unpack ty
+    "Unknown block type (expr): " ++ unpack ty
 
 -- | Parses the body of a statement block.
 parseStmtTy :: Text -> Parser Element Program
@@ -220,14 +317,15 @@ parseStmtTy "entry_point"         = parseEntryPoint
 parseStmtTy "variables_set"       = parseVarSet
 parseStmtTy "controls_repeat_ext" = parseRepeat
 parseStmtTy "controls_if"         = parseControlIf
+parseStmtTy "procedures_callnoreturn" = parseCallNoReturn
 parseStmtTy ty = const $ throwE $
-    "Unknown block type: " ++ unpack ty
+    "Unknown block type (stmt): " ++ unpack ty
 
 -- | Parses a block, including its header.
 parseExpr :: Parser Element Expr
 parseExpr e@Element {..} = case M.lookup "id" elementAttributes of
     Nothing -> throwE $
-        "Block " ++ unpack (nameLocalName elementName) ++
+        "Block (expr) " ++ unpack (nameLocalName elementName) ++
         " is missing attribute: id"
     Just _  -> case M.lookup "type" elementAttributes of
         Nothing -> throwE "Block is missing attribute: type"
@@ -237,21 +335,38 @@ parseExpr e@Element {..} = case M.lookup "id" elementAttributes of
 parseStmt :: Parser Element Program
 parseStmt e@Element {..} = case M.lookup "id" elementAttributes of
     Nothing -> throwE $
-        "Block " ++ unpack (nameLocalName elementName) ++
+        "Block (stmt) " ++ unpack (nameLocalName elementName) ++
         " is missing attribute: id"
     Just _  -> case M.lookup "type" elementAttributes of
         Nothing -> throwE "Block is missing attribute: type"
         Just ty -> parseStmtTy ty e
+
+parseSubroutine :: Parser Element Stmt
+parseSubroutine e@Element {..} = case M.lookup "id" elementAttributes of 
+    Nothing -> throwE $ "Block (subroutine) " ++ unpack (nameLocalName elementName) ++ " is missing attribute: id"
+    Just _ -> case M.lookup "type" elementAttributes of
+        Nothing -> throwE "Block is missing attribute: type"
+        Just ty -> case ty of
+            "procedures_defnoreturn" -> parseDefSubroutine e
+            "procedures_defreturn"   -> parseDefSubroutine e
+            _ -> throwE $ "Unknown block type (procedures): " ++ unpack ty
 
 -- | Parses a Google Blockly document.
 parseDoc :: Parser Element Doc
 parseDoc Element {..} = do
     ve <- require "Variables section is missing!" $
             element "variables" elementNodes
-    vs <- parseVars ve
-    bs <- trace ("no. of top level blocks to parse " ++ show (Prelude.length (elementsByName "block" elementNodes))) 
-        (mapM parseStmt (elementsByName "block" elementNodes)) -- TODO: only parse the entry point and ignore everything else
-    return $ Doc vs (Prelude.concat bs)
+    vs   <- parseVars ve
+    bs   <- mapM parseStmt (startElements elementNodes) --(elementsByName "block" elementNodes)) -- TODO: only parse the entry point and ignore everything else
+    subs <- mapM parseSubroutine (procedureElements elementNodes)
+    let memory = Prelude.map (\s@(DefSubroutine n _) -> (n, s)) subs
+    
+    traceM ("#Top Level Blocks: "  ++ show (Prelude.length (elementsByName "block" elementNodes)))
+    traceM ("#Start Blocks: "      ++ show (Prelude.length bs))
+    traceM ("#Subroutine Blocks: " ++ show (Prelude.length subs))
+    
+    traceM $ show subs
+    return $ Doc vs (Prelude.concat bs) memory
 
 -- | Tries to convert a byte string into a document.
 convert :: BS.ByteString -> Either String Doc

@@ -8,6 +8,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module contains the main entry point to the program and implements
 -- the web server.
@@ -63,7 +64,7 @@ instance ToJSON RunResponse where
 -- Does warnings about instance orphans -- should I care?
 instance ToJSON MemCell where
     toJSON (Language.Val i) = toJSON i
-    toJSON (Language.SubProgram _) = "Program"
+    toJSON Language.SubProgram {} = "Program"
 
 --------------------------------------------------------------------------------
 
@@ -84,8 +85,8 @@ webAppSettings = (defaultWebAppSettings ".") {
 
 -- | The request handler for evaluation requests.
 runInterpreter :: Doc -> Handler RunResponse
-runInterpreter (Doc vs stmts) =
-    case interpret stmts [(v, Language.Val 0) | v <- vs] of
+runInterpreter (Doc vs stmts subs) =
+    case interpret stmts ([(v, Language.Val 0) | v <- vs] ++ [(name, SubProgram stmt) | (name, stmt) <- subs]) of
         Left err -> return $ RunFailure (show err)
         Right mem -> return $ RunSuccess mem
 
