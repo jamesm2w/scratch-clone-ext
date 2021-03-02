@@ -26,8 +26,6 @@ import Text.HTML.DOM
 
 import Language
 
-import Debug.Trace
-
 --------------------------------------------------------------------------------
 
 -- | Represents a Google Blockly XML document.
@@ -360,12 +358,7 @@ parseDoc Element {..} = do
     bs   <- mapM parseStmt (startElements elementNodes) --(elementsByName "block" elementNodes)) -- TODO: only parse the entry point and ignore everything else
     subs <- mapM parseSubroutine (procedureElements elementNodes)
     let memory = Prelude.map (\s@(DefSubroutine n _) -> (n, s)) subs
-    
-    traceM ("#Top Level Blocks: "  ++ show (Prelude.length (elementsByName "block" elementNodes)))
-    traceM ("#Start Blocks: "      ++ show (Prelude.length bs))
-    traceM ("#Subroutine Blocks: " ++ show (Prelude.length subs))
-    
-    traceM $ show subs
+
     return $ Doc vs (Prelude.concat bs) memory
 
 -- | Tries to convert a byte string into a document.
