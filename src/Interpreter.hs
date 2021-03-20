@@ -27,7 +27,7 @@ data Err
     | UninitialisedMemory String        -- ^ Tried to read from a variable
                                         -- that does not exist.
     | WrongMemoryType String            -- Wrong Memory type: variable : expected : got
-    | ExecutionTerminated Memory        -- Execution of the program has terminated prematurely with this memory.
+    | ExecutionTerminated Memory Bool   -- Execution of the program has terminated prematurely with this memory.
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ exec RepeatStmt{..} m = do i <- eval repeatTimesExpr m
 
 -- | Runs a subroutine
 exec DefSubroutine{..} m = case interpret routineProgram m of
-                                Left (ExecutionTerminated mem) -> Right mem
+                                Left (ExecutionTerminated mem _) -> Right mem
                                 Left err -> Left $ appendError err $ " in subroutine " ++ routineName
                                 Right mem -> Right mem 
 
@@ -135,7 +135,7 @@ exec ReturnIfValue{..} m  = do  cond <- eval returnPredicate m
                                 if cond == 0 then
                                     pure m
                                 else 
-                                    Left $ ExecutionTerminated $ ("subroutine_return", Val value):m
+                                    Left $ ExecutionTerminated (("subroutine_return", Val value):m) False
 
 -- | Returns from a subprocedure if a predicate is truthy (continues execution otherwise)
 -- Similar to return with a value, this uses ExecutionTerminated to break the interpreter out to the
@@ -143,13 +143,17 @@ exec ReturnIfValue{..} m  = do  cond <- eval returnPredicate m
 exec ReturnIf{..} m = do cond <- eval returnPredicate m
                          if cond == 0 then
                              pure m
-                         else Left $ ExecutionTerminated m
+                         else Left $ ExecutionTerminated m False
 
 -- | Repeats a given code block until a given predicate is truthy (if false then it interprets the statements again)
 exec RepeatUntilStmt{..} m = do memory' <- interpret repeatBody m
                                 loop <- eval repeatPredicate memory'
                                 if loop == 0 then
-                                    exec (RepeatUntilStmt repeatPredicate repeatBody) memory'
+                                    case exec (RepeatUntilStmt repeatPredicate repeatBody) memory' of
+                                            Left (ExecutionTerminated mem True) -> return mem
+                                            Left (ExecutionTerminated mem False) -> exec (RepeatUntilStmt repeatPredicate repeatBody) mem
+                                            Left err -> Left err
+                                            Right mem -> return mem
                                 else
                                     return memory'
 -- | Repeats a given code block while a given predicate is truthy
@@ -159,7 +163,11 @@ exec RepeatWhileStmt{..} m = do loop <- eval repeatPredicate m
                                 then return m
                                 else do
                                         memory' <- interpret repeatBody m
-                                        exec (RepeatWhileStmt repeatPredicate repeatBody) memory'
+                                        case exec (RepeatWhileStmt repeatPredicate repeatBody) memory' of
+                                            Left (ExecutionTerminated mem True) -> return mem
+                                            Left (ExecutionTerminated mem False) -> exec (RepeatWhileStmt repeatPredicate repeatBody) mem
+                                            Left err -> Left err
+                                            Right mem -> return mem
 
 -- | Counts a variable from an initial value to a limit, incrementing by `increment` each time
 -- N.B. count variable can be directly manipulated in memory unlike normal repeat.
@@ -174,11 +182,17 @@ exec CountStmt{..} m = do from <- eval countInitial m
                               do 
                                   memory'' <- interpret countBody memory'
                                   count <- memGetVal countVar memory''
-                                  exec (CountStmt countVar (ValE $ count + by) countLimit countIncrement countBody) 
-                                    memory''
+                                  case exec (CountStmt countVar (ValE $ count + by) countLimit countIncrement countBody) 
+                                    memory'' of
+                                            Left (ExecutionTerminated mem True) -> return mem
+                                            Left (ExecutionTerminated mem False) -> exec (CountStmt countVar (ValE $ count + by) countLimit countIncrement countBody) 
+                                                 mem
+                                            Left err -> Left err
+                                            Right mem -> return mem
                           else
                               return memory'
 
+exec ControlStmt{..} m = Left $ ExecutionTerminated m controlBreak
 
 
 ---------------------------------

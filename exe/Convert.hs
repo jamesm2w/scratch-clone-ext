@@ -341,6 +341,12 @@ parseForStmt e = do
     block <- statement "DO" e
     return $ CountStmt (unpack variableE) fromE toE byE block : p
 
+parseBreakStmt :: Parser Element Program
+parseBreakStmt e = do
+    p <- parseNext e
+    t <- field "FLOW" (elementNodes e)
+    return $ ControlStmt (unpack t == "BREAK") : p
+
 -- | Parses the body of an expression block.
 parseExprTy :: Text -> Parser Element Expr
 parseExprTy "math_number"           = parseMathNumber
@@ -362,6 +368,7 @@ parseStmtTy "procedures_callnoreturn" = parseCallNoReturn
 parseStmtTy "procedures_ifreturn" = parseReturnStmt
 parseStmtTy "controls_whileUntil" = parseWhileUntil
 parseStmtTy "controls_for"        = parseForStmt
+parseStmtTy "controls_flow_statements" = parseBreakStmt
 parseStmtTy ty = const $ throwE $
     "Unknown block type (stmt): " ++ unpack ty
 

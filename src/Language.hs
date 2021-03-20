@@ -65,6 +65,9 @@ data Stmt
         countIncrement :: Expr,
         countBody :: [Stmt]
     }
+    | ControlStmt {
+        controlBreak :: Bool
+    }
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
