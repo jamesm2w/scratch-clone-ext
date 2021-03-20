@@ -12,18 +12,22 @@ module Interpreter where
 import Language
 import Control.Monad
 
+import Debug.Trace
+
 --------------------------------------------------------------------------------
 
 -- | In our memory, named locations map to values.
-type Memory = [(String, Int)]
+type Memory = [(String, MemCell)]
 
 -- | Enumerates reasons for errors.
 data Err
-    = DivByZeroError                    -- ^ Division by zero was attempted.
-    | NegativeExponentError             -- ^ Raising a number to a negative
+    = DivByZeroError String                    -- ^ Division by zero was attempted.
+    | NegativeExponentError String             -- ^ Raising a number to a negative
                                         -- exponent was attempted.
     | UninitialisedMemory String        -- ^ Tried to read from a variable
                                         -- that does not exist.
+    | WrongMemoryType String            -- Wrong Memory type: variable : expected : got
+    | ExecutionTerminated Memory        -- Execution of the program has terminated prematurely with this memory.
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -48,7 +52,7 @@ eval (ValE i) _ = Right i
 
 -- VarE is a reference to a variable. Runs in O(n) time as it uses 
 -- a linear search to find the value in memory
-eval (VarE x) m = memGet x m
+eval (VarE x) m = memGetVal x m
 
 -- BinOpE represents the application of an operator with two arguments.
 -- It first evaluates the left and right arguments and then uses the apply
@@ -58,6 +62,25 @@ eval (BinOpE o l r) m = do vl <- eval l m
                            vr <- eval r m
                            apply o vl vr
 
+-- Evaluate a call to a subroutine
+eval (CallFunction n args) m = do 
+    subProg <- memGetProg n m
+    --let argStmts = [AssignStmt an ae | (an, ae) <- args]
+    --memory <- interpret argStmts m
+    argExprs <- mapM (\x -> eval (snd x) m) args
+    let argsNorm = zipWith (\a b -> (a, Val b)) (map fst args) argExprs
+    let mem = setAll argsNorm m 
+    
+    traceM $ show args ++ " in " ++ show mem
+    --traceM $ "results in: " ++ show mem
+    
+    memory' <- exec subProg mem
+    eval (VarE "subroutine_return") memory'
+
+setAll :: [(String, MemCell)] -> [(String, MemCell)] -> [(String, MemCell)]
+setAll cs fs = foldl (flip $ uncurry memSet) fs cs
+
+
 -- | Execute a statement with memory context. Returns either the new state of memory
 -- or an error from evaluatation.
 exec :: Stmt -> Memory -> Either Err Memory
@@ -65,7 +88,7 @@ exec :: Stmt -> Memory -> Either Err Memory
 -- Assign statement: Assigns a value in memory. This evaluates an expression then sets memory.
 -- Runs in O(n) time as it uses a linear search to set memory contents.
 exec AssignStmt{..} m = do x <- eval assignExpr m
-                           return $ memSet assignVar x m
+                           return $ memSet assignVar (Val x) m
 
 -- If Statement: Evaluates an if condition. If == 0 then interprets the associated body statements.
 -- however, if it's zero it procedes to check the else if conditions, until there are none left
@@ -86,6 +109,39 @@ exec IfStmt{..} m = do
 exec RepeatStmt{..} m = do i <- eval repeatTimesExpr m 
                            foldM (flip interpret) m (replicate i repeatBody)
 
+-- | Runs a subroutine
+exec DefSubroutine{..} m = case interpret routineProgram m of
+                                Left (ExecutionTerminated mem) -> Right mem
+                                Left err -> Left $ appendError err $ " in subroutine " ++ routineName
+                                Right mem -> Right mem 
+
+-- | Calls a subroutine by name with given input
+exec CallSubroutine{..} m = 
+    do  
+        subProg <- memGetProg subName m
+        let argStmts = [AssignStmt an ae | (an, ae) <- subInput]
+        --traceM (show subInput)
+        memory <- interpret argStmts m
+        --traceM (show memory)
+        exec subProg memory
+
+
+-- | Sets an expression to be the return value for the subroutine.
+exec SubroutineReturn{..} m = exec (AssignStmt "subroutine_return" returnValue) m
+
+-- | 
+exec ReturnIfValue{..} m  = do  cond <- eval returnPredicate m
+                                value <- eval returnValue m
+                                if cond == 0 then
+                                    pure m
+                                else 
+                                    Left $ ExecutionTerminated $ ("subroutine_return", Val value):m
+
+exec ReturnIf{..} m = do cond <- eval returnPredicate m
+                         if cond == 0 then
+                             pure m
+                         else Left $ ExecutionTerminated m
+
 ---------------------------------
 -- Auxilliary Helper functions --
 ---------------------------------
@@ -103,17 +159,33 @@ exec RepeatStmt{..} m = do i <- eval repeatTimesExpr m
 -- at one time.
 -- Runs in O(n) since it uses filter, which is a linear search through
 -- the list.
-memSet :: String -> Int -> Memory -> Memory
+memSet :: String -> MemCell -> Memory -> Memory
 memSet n v m = (n, v) : filter ((n /=) . fst) m
 
 -- | A helper function to lookup a value from memory, wrapped like this
 -- to make sure if it's not in memory an UninitialisedMemory error is returned.
 -- Works in O(n) time by a linear search through the memory list
-memGet :: String -> Memory -> Either Err Int
+memGet :: String -> Memory -> Either Err MemCell
 memGet n m = case lookup n m of
                 Nothing -> Left $ UninitialisedMemory n
                 Just v  -> Right v
 
+memGetVal :: String -> Memory -> Either Err Int
+memGetVal n m = memGet n m >>= value
+    where value (Val i) = return i
+          value (SubProgram _) = Left $ WrongMemoryType $ show n ++ " expected Value got SubProgram"
+
+memGetProg :: String -> Memory -> Either Err Stmt
+memGetProg n m = memGet n m >>= program
+    where program (Val _) = Left $ WrongMemoryType $ show n ++ " expected SubProgram got Value"
+          program (SubProgram e) = return e
+
+appendError :: Err -> String -> Err
+appendError (UninitialisedMemory x)   xs = UninitialisedMemory $ x ++ xs
+appendError (WrongMemoryType x)       xs = WrongMemoryType $ x ++ xs
+appendError (DivByZeroError x)        xs = DivByZeroError $ x ++ xs
+appendError (NegativeExponentError x) xs = NegativeExponentError $ x ++ xs
+appendError err _ = err
 
 -- | `pureEnum` just defines the compostion of pure
 -- and fromEnum to give a shorthand for use in the 
@@ -130,9 +202,11 @@ apply :: Op -> Int -> Int -> Either Err Int
 apply Add x y = pure $ x + y
 apply Sub x y = pure $ x - y
 apply Mul x y = pure $ x * y
-apply Div _ 0 = Left DivByZeroError
+apply Div _ 0 = Left $ DivByZeroError ""
 apply Div x y = Right $ x `div` y
-apply Pow x y | y < 0     = Left NegativeExponentError 
+apply Mod _ 0 = Left $ DivByZeroError ""
+apply Mod x y = pure $ x `mod` y
+apply Pow x y | y < 0     = Left $ NegativeExponentError "" 
               | otherwise = Right $ x ^ y
 apply Equal           x y = pureEnum $ x == y
 apply Neq             x y = pureEnum $ x /= y

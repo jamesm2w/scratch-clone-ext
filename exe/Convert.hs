@@ -292,12 +292,47 @@ parseCallNoReturn e = do
     p <- parseNext e
     return $ CallSubroutine name xs : p
 
--- TODO: this.
+-- | Parses a return statement with a predicate
 parseReturnStmt :: Parser Element Program
 parseReturnStmt e = do
-
     p <- parseNext e
-    return $ SubroutineReturn (ValE 0) : p
+    mutators <- mutations e
+    let tv = M.lookup "value" mutators
+    ty <- case tv of
+        Nothing -> throwE "Return type not present"
+        Just "0" -> return False
+        Just "1" -> return True
+        Just _ -> throwE "Invalid return type"
+
+    condE <- value "CONDITION" (elementNodes e) 
+    cond <- case condE of
+        Nothing -> throwE "Missing condition"
+        Just b -> return b
+    
+    if ty then
+        do  -- Returns a value
+            rValE <- value "VALUE" (elementNodes e)
+            rVal <- case rValE of 
+                Nothing -> throwE "Missing return value"
+                Just b -> return b
+            return $ ReturnIfValue cond rVal : p
+    else
+        do  -- Does not return value
+            return $ ReturnIf cond : p
+
+-- | Parse a modulo expression block
+parseMathModulo :: Parser Element Expr
+parseMathModulo e = do 
+    dividendE <- value "DIVIDEND" (elementNodes e)
+    dividend <- case dividendE of
+        Nothing -> throwE "Missing dividend"
+        Just v -> pure v
+    divisorE <- value "DIVISOR" (elementNodes e)
+    divisor <- case divisorE of
+        Nothing -> throwE "Missing divisor"
+        Just v -> pure v
+
+    return $ BinOpE Mod dividend divisor
 
 -- | Parses the body of an expression block.
 parseExprTy :: Text -> Parser Element Expr
@@ -306,6 +341,7 @@ parseExprTy "math_arithmetic"       = parseBinOp
 parseExprTy "logic_compare"         = parseBinOp
 parseExprTy "variables_get"         = parseVarGet
 parseExprTy "procedures_callreturn" = parseCallReturn
+parseExprTy "math_modulo" = parseMathModulo
 parseExprTy ty                = const $ throwE $
     "Unknown block type (expr): " ++ unpack ty
 
@@ -316,6 +352,7 @@ parseStmtTy "variables_set"       = parseVarSet
 parseStmtTy "controls_repeat_ext" = parseRepeat
 parseStmtTy "controls_if"         = parseControlIf
 parseStmtTy "procedures_callnoreturn" = parseCallNoReturn
+parseStmtTy "procedures_ifreturn" = parseReturnStmt
 parseStmtTy ty = const $ throwE $
     "Unknown block type (stmt): " ++ unpack ty
 

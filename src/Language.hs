@@ -43,6 +43,13 @@ data Stmt
     | SubroutineReturn {
         returnValue :: Expr
     }
+    | ReturnIf {
+        returnPredicate :: Expr
+    }
+    | ReturnIfValue {
+        returnPredicate :: Expr,
+        returnValue :: Expr
+    }
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -53,6 +60,7 @@ data Op
     | Sub                               -- ^ The - operator.
     | Mul                               -- ^ The * operator.
     | Div                               -- ^ The / operator.
+    | Mod                               -- ^ The % (modulo) operator.
     | Pow                               -- ^ The power of operator.
     | Equal                             -- ^ The == operator.
     | Neq                               -- ^ The /= operator.
