@@ -50,6 +50,20 @@ data Stmt
         returnPredicate :: Expr,
         returnValue :: Expr
     }
+    | RepeatUntilStmt {
+        repeatPredicate :: Expr,
+        repeatBody :: [Stmt]
+    }
+    | RepeatWhileStmt {
+        repeatPredicate :: Expr,
+        repeatBody :: [Stmt]
+    }
+    | CountStmt {
+        countInitial :: Expr,
+        countLimit :: Expr,
+        countIncrement :: Expr,
+        countBody :: [Stmt]
+    }
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------

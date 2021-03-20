@@ -24,7 +24,7 @@ instance Arbitrary Op where
     arbitrary = elements [minBound..maxBound]
 
 safeOps :: [Op]
-safeOps = [op | op <- [minBound..maxBound], op /= Div, op /= Pow]
+safeOps = [op | op <- [minBound..maxBound], op /= Div, op /= Pow, op /= Mod]
 
 instance Arbitrary Expr where
     arbitrary = resize 10 $ sized arbExpr
@@ -147,10 +147,10 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
                            length (nub $ map fst m)
     ,   QC.testProperty "handles division by zero in assignments" $ \(x :: Int) ->
         interpret [AssignStmt "x" (BinOpE Div (ValE x) (ValE 0))] []
-        === Left DivByZeroError
+        === Left (DivByZeroError "")
     ,   QC.testProperty "handles negative exponents in assignments" $ \(x :: Int) ->
         interpret [AssignStmt "x" (BinOpE Pow (ValE x) (ValE (-1)))] []
-        === Left NegativeExponentError
+        === Left (NegativeExponentError "")
     ,   testCase "handles uninitialised memory in assignments" $
         interpret [AssignStmt "y" (VarE "x")] []
         @?= Left (UninitialisedMemory "x")
@@ -162,16 +162,16 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
         terminates $ interpret (repeatArbitraryTest expr) [("x", Val 0)]
     ,   QC.testProperty "repeat correctly handles exceptions in condition" $ \(x :: Int) ->
              interpret [RepeatStmt (BinOpE Div (ValE x) (ValE 0)) []] []
-             === Left DivByZeroError
+             === Left (DivByZeroError "")
         .&&. interpret [RepeatStmt (BinOpE Pow (ValE x) (ValE (-1))) []] []
-             === Left NegativeExponentError
+             === Left (NegativeExponentError "")
         .&&. interpret [RepeatStmt (VarE "x") []] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "repeat correctly handles exceptions in body" $ \(x :: Int) ->
              interpret [RepeatStmt (ValE 10) [AssignStmt "y" (BinOpE Div (ValE x) (ValE 0))]] []
-             === Left DivByZeroError
+             === Left (DivByZeroError "")
         .&&. interpret [RepeatStmt (ValE 10) [AssignStmt "y" (BinOpE Pow (ValE x) (ValE (-1)))]] []
-             === Left NegativeExponentError
+             === Left (NegativeExponentError "")
         .&&. interpret [RepeatStmt (ValE 10) [AssignStmt "y" (VarE "x")]] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "implements if" $ \(Positive n) ->
@@ -183,25 +183,25 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
         hasMemory [("x",Val $ n+1)] $ interpret (rawIfTest (ValE n) (n+1)) [("x", Val 0)]
     ,   QC.testProperty "if correctly handles exceptions in condition" $ \(x :: Int) ->
              interpret [IfStmt (BinOpE Div (ValE x) (ValE 0)) [] [] []] []
-             === Left DivByZeroError
+             === Left (DivByZeroError "")
         .&&. interpret [IfStmt (BinOpE Pow (ValE x) (ValE (-1))) [] [] []] []
-             === Left NegativeExponentError
+             === Left (NegativeExponentError "")
         .&&. interpret [IfStmt (VarE "x") [] [] []] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "if correctly handles exceptions in body" $ \(x :: Int) ->
              interpret [IfStmt (ValE 1) [AssignStmt "y" (BinOpE Div (ValE x) (ValE 0))] [] []] []
-             === Left DivByZeroError
+             === Left (DivByZeroError "")
         .&&. interpret [IfStmt (ValE 1) [AssignStmt "y" (BinOpE Pow (ValE x) (ValE (-1)))] [] []] []
-             === Left NegativeExponentError
+             === Left (NegativeExponentError "")
         .&&. interpret [IfStmt (ValE 1) [AssignStmt "y" (VarE "x")] [] []] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "implements else" $ \(Positive n) ->
         hasMemory [("x", Val n)] $ interpret (elseTest (ValE 0) n) [("x", Val 0)]
     ,   QC.testProperty "else correctly handles exceptions in body" $ \(x :: Int) ->
              interpret [IfStmt (ValE 0) [] [] [AssignStmt "y" (BinOpE Div (ValE x) (ValE 0))]] []
-             === Left DivByZeroError
+             === Left (DivByZeroError "")
         .&&. interpret [IfStmt (ValE 0) [] [] [AssignStmt "y" (BinOpE Pow (ValE x) (ValE (-1)))]] []
-             === Left NegativeExponentError
+             === Left (NegativeExponentError "")
         .&&. interpret [IfStmt (ValE 0) [] [] [AssignStmt "y" (VarE "x")]] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "implements else if" $ \(Positive n) ->
@@ -213,16 +213,16 @@ tests = localOption (Timeout (5*1000000) "5s") $ testGroup "Interpreter.interpre
         hasMemory [("x",Val $ n+1)] $ interpret (rawIfElseTest (ValE n) (n+1)) [("x", Val 0)]
     ,   QC.testProperty "else if correctly handles exceptions in condition" $ \(x :: Int) ->
              interpret [IfStmt (ValE 0) [] [(BinOpE Div (ValE x) (ValE 0), [])] []] []
-             === Left DivByZeroError
+             === Left (DivByZeroError "")
         .&&. interpret [IfStmt (ValE 0) [] [(BinOpE Pow (ValE x) (ValE (-1)), [])] []] []
-             === Left NegativeExponentError
+             === Left (NegativeExponentError "")
         .&&. interpret [IfStmt (ValE 0) [] [(VarE "x", [])] []] []
              === Left (UninitialisedMemory "x")
     ,   QC.testProperty "else if correctly handles exceptions in body" $ \(x :: Int) ->
              interpret [IfStmt (ValE 0) [] [(ValE 1, [AssignStmt "y" (BinOpE Div (ValE x) (ValE 0))])] []] []
-             === Left DivByZeroError
+             === Left (DivByZeroError "")
         .&&. interpret [IfStmt (ValE 0) [] [(ValE 1, [AssignStmt "y" (BinOpE Pow (ValE x) (ValE (-1)))])] []] []
-             === Left NegativeExponentError
+             === Left (NegativeExponentError "")
         .&&. interpret [IfStmt (ValE 0) [] [(ValE 1, [AssignStmt "y" (VarE "x")])] []] []
              === Left (UninitialisedMemory "x")
     ,   testGroup "Example programs" [

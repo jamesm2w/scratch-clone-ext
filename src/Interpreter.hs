@@ -142,6 +142,23 @@ exec ReturnIf{..} m = do cond <- eval returnPredicate m
                              pure m
                          else Left $ ExecutionTerminated m
 
+exec RepeatUntilStmt{..} m = do memory' <- interpret repeatBody m
+                                loop <- eval repeatPredicate memory'
+                                if loop == 0 then
+                                    exec (RepeatUntilStmt repeatPredicate repeatBody) memory'
+                                else
+                                    return memory'
+
+exec RepeatWhileStmt{..} m = do loop <- eval repeatPredicate m
+                                if loop == 0 
+                                then return m
+                                else do
+                                        memory' <- interpret repeatBody m
+                                        exec (RepeatWhileStmt repeatPredicate repeatBody) memory'
+
+exec CountStmt{..} m = undefined
+
+
 ---------------------------------
 -- Auxilliary Helper functions --
 ---------------------------------
