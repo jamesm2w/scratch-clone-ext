@@ -120,16 +120,16 @@ exec CallSubroutine{..} m =
     do  
         subProg <- memGetProg subName m
         let argStmts = [AssignStmt an ae | (an, ae) <- subInput]
-        --traceM (show subInput)
         memory <- interpret argStmts m
-        --traceM (show memory)
         exec subProg memory
 
 
 -- | Sets an expression to be the return value for the subroutine.
 exec SubroutineReturn{..} m = exec (AssignStmt "subroutine_return" returnValue) m
 
--- | 
+-- | Returns a value from a subroutine if a given predicate is truthy (continues otherwise)
+-- Uses the ExceptionTerminated error value, which is not strictly an error, but forces the
+-- interpreter to stop and break out to the next level up.
 exec ReturnIfValue{..} m  = do  cond <- eval returnPredicate m
                                 value <- eval returnValue m
                                 if cond == 0 then
@@ -137,18 +137,23 @@ exec ReturnIfValue{..} m  = do  cond <- eval returnPredicate m
                                 else 
                                     Left $ ExecutionTerminated $ ("subroutine_return", Val value):m
 
+-- | Returns from a subprocedure if a predicate is truthy (continues execution otherwise)
+-- Similar to return with a value, this uses ExecutionTerminated to break the interpreter out to the
+-- next level up.
 exec ReturnIf{..} m = do cond <- eval returnPredicate m
                          if cond == 0 then
                              pure m
                          else Left $ ExecutionTerminated m
 
+-- | Repeats a given code block until a given predicate is truthy (if false then it interprets the statements again)
 exec RepeatUntilStmt{..} m = do memory' <- interpret repeatBody m
                                 loop <- eval repeatPredicate memory'
                                 if loop == 0 then
                                     exec (RepeatUntilStmt repeatPredicate repeatBody) memory'
                                 else
                                     return memory'
-
+-- | Repeats a given code block while a given predicate is truthy
+-- If false, it stops looping.
 exec RepeatWhileStmt{..} m = do loop <- eval repeatPredicate m
                                 if loop == 0 
                                 then return m
@@ -156,7 +161,24 @@ exec RepeatWhileStmt{..} m = do loop <- eval repeatPredicate m
                                         memory' <- interpret repeatBody m
                                         exec (RepeatWhileStmt repeatPredicate repeatBody) memory'
 
-exec CountStmt{..} m = undefined
+-- | Counts a variable from an initial value to a limit, incrementing by `increment` each time
+-- N.B. count variable can be directly manipulated in memory unlike normal repeat.
+-- Similar to a for loop, but enforces the "<" stopping condition.
+-- Works by recursively calling itself, moving the lower limit up by the increment each time
+-- until the lower limit is not < upper limit, when it exits with the new state of memory.
+exec CountStmt{..} m = do from <- eval countInitial m
+                          let memory' = memSet countVar (Val from) m
+                          limit <- eval countLimit memory'
+                          by <- eval countIncrement memory'
+                          if from < limit then
+                              do 
+                                  memory'' <- interpret countBody memory'
+                                  count <- memGetVal countVar memory''
+                                  exec (CountStmt countVar (ValE $ count + by) countLimit countIncrement countBody) 
+                                    memory''
+                          else
+                              return memory'
+
 
 
 ---------------------------------
@@ -187,16 +209,20 @@ memGet n m = case lookup n m of
                 Nothing -> Left $ UninitialisedMemory n
                 Just v  -> Right v
 
+-- | Gets an integer value from memory, or raises an appropriate type error.
 memGetVal :: String -> Memory -> Either Err Int
 memGetVal n m = memGet n m >>= value
     where value (Val i) = return i
           value (SubProgram _) = Left $ WrongMemoryType $ show n ++ " expected Value got SubProgram"
 
+-- | Gets a program type value from memory, or raises an appropriate type error.
 memGetProg :: String -> Memory -> Either Err Stmt
 memGetProg n m = memGet n m >>= program
     where program (Val _) = Left $ WrongMemoryType $ show n ++ " expected SubProgram got Value"
           program (SubProgram e) = return e
 
+-- | Helper function for appending an error message to an error (e.g. if the error occured in a fucntion
+-- alerting the user in which function the error occured in!)
 appendError :: Err -> String -> Err
 appendError (UninitialisedMemory x)   xs = UninitialisedMemory $ x ++ xs
 appendError (WrongMemoryType x)       xs = WrongMemoryType $ x ++ xs

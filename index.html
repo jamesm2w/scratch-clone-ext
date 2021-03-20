@@ -35,34 +35,58 @@
         
         <category name="Control" colour="210">
             <block type="controls_if"></block>
-            <block type="controls_repeat_ext"></block>
+            <block type="controls_repeat_ext">
+                <value name="TIMES">
+                    <shadow type="math_number">
+                        <field name="NUM">0</field>
+                    </shadow>
+                </value>
+            </block>
+            <block type="controls_whileUntil"></block>
+            <block type="controls_for">
+                <value name="FROM">
+                    <shadow type="math_number">
+                        <field name="NUM">0</field>
+                    </shadow>
+                </value>
+                <value name="TO">
+                    <shadow type="math_number">
+                        <field name="NUM">1</field>
+                    </shadow>
+                </value>
+                <value name="BY">
+                    <shadow type="math_number">
+                        <field name="NUM">1</field>
+                    </shadow>
+                </value>
+            </block>
+            
         </category>
         
         <category name="Maths" colour="">
             <block type="math_number"></block>
-            <block type="math_arithmetic"></block>
             <block type="math_arithmetic">
                 <field name="OP">ADD</field>
                 <value name="A">
                     <shadow type="math_number">
-                    <field name="NUM">1</field>
+                        <field name="NUM">1</field>
                     </shadow>
                 </value>
                 <value name="B">
                     <shadow type="math_number">
-                    <field name="NUM">1</field>
+                        <field name="NUM">1</field>
                     </shadow>
                 </value>
             </block>
             <block type="math_modulo">
                 <value name="DIVISOR">
                     <shadow type="math_number">
-                    <field name="NUM">1</field>
+                        <field name="NUM">1</field>
                     </shadow>
                 </value>
                 <value name="DIVIDEND">
                     <shadow type="math_number">
-                    <field name="NUM">1</field>
+                        <field name="NUM">1</field>
                     </shadow>
                 </value>
             </block>         

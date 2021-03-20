@@ -59,6 +59,7 @@ data Stmt
         repeatBody :: [Stmt]
     }
     | CountStmt {
+        countVar :: String,
         countInitial :: Expr,
         countLimit :: Expr,
         countIncrement :: Expr,

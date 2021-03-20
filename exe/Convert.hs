@@ -303,36 +303,43 @@ parseReturnStmt e = do
         Just "0" -> return False
         Just "1" -> return True
         Just _ -> throwE "Invalid return type"
-
-    condE <- value "CONDITION" (elementNodes e) 
-    cond <- case condE of
-        Nothing -> throwE "Missing condition"
-        Just b -> return b
-    
+    condE <- force "CONDITION is required" $ value "CONDITION" (elementNodes e) 
     if ty then
         do  -- Returns a value
-            rValE <- value "VALUE" (elementNodes e)
-            rVal <- case rValE of 
-                Nothing -> throwE "Missing return value"
-                Just b -> return b
-            return $ ReturnIfValue cond rVal : p
+            rValE <- force "return VALUE is required" $ value "VALUE" (elementNodes e)
+            return $ ReturnIfValue condE rValE : p
     else
         do  -- Does not return value
-            return $ ReturnIf cond : p
+            return $ ReturnIf condE : p
 
 -- | Parse a modulo expression block
 parseMathModulo :: Parser Element Expr
 parseMathModulo e = do 
-    dividendE <- value "DIVIDEND" (elementNodes e)
-    dividend <- case dividendE of
-        Nothing -> throwE "Missing dividend"
-        Just v -> pure v
-    divisorE <- value "DIVISOR" (elementNodes e)
-    divisor <- case divisorE of
-        Nothing -> throwE "Missing divisor"
-        Just v -> pure v
+    dividendE <- force "DIVIDEND is required" $ value "DIVIDEND" (elementNodes e)
+    divisorE <- force "DIVISOR is required" $ value "DIVISOR" (elementNodes e) 
+    return $ BinOpE Mod dividendE divisorE
 
-    return $ BinOpE Mod dividend divisor
+parseWhileUntil :: Parser Element Program
+parseWhileUntil e = do 
+    p <- parseNext e
+    predE <- force "BOOL predicate is required" $ value "BOOL" (elementNodes e)
+    block <- statement "DO" e
+    mode <- field "MODE" (elementNodes e)
+    stmt <- case mode of 
+        "UNTIL" -> return $ RepeatUntilStmt predE block
+        "WHILE" -> return $ RepeatWhileStmt predE block
+        _ -> throwE "Mode not recognised"
+    return $ stmt : p
+
+parseForStmt :: Parser Element Program
+parseForStmt e = do
+    p <- parseNext e
+    fromE <- force "FROM is required" $ value "FROM" (elementNodes e)
+    toE <- force "TO is required" $ value "TO" (elementNodes e)
+    byE <- force "BY is required" $ value "BY" (elementNodes e)
+    variableE <- field "VAR" (elementNodes e)
+    block <- statement "DO" e
+    return $ CountStmt (unpack variableE) fromE toE byE block : p
 
 -- | Parses the body of an expression block.
 parseExprTy :: Text -> Parser Element Expr
@@ -353,6 +360,8 @@ parseStmtTy "controls_repeat_ext" = parseRepeat
 parseStmtTy "controls_if"         = parseControlIf
 parseStmtTy "procedures_callnoreturn" = parseCallNoReturn
 parseStmtTy "procedures_ifreturn" = parseReturnStmt
+parseStmtTy "controls_whileUntil" = parseWhileUntil
+parseStmtTy "controls_for"        = parseForStmt
 parseStmtTy ty = const $ throwE $
     "Unknown block type (stmt): " ++ unpack ty
 
