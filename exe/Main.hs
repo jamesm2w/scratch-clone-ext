@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- Functional Programming (CS141)                                             --
--- Coursework 2: Scratch clone                                                --
+-- Coursework 2: Scratch clone : Extended Edition                             --
 --------------------------------------------------------------------------------
 
 {-# LANGUAGE DataKinds #-}
@@ -85,7 +85,7 @@ webAppSettings = (defaultWebAppSettings ".") {
 
 -- | The request handler for evaluation requests.
 runInterpreter :: Doc -> Handler RunResponse
-runInterpreter (Doc vs stmts subs) =
+runInterpreter (Doc vs stmts subs) = -- \/ parses sub programs as well as value into the memory.
     case interpret stmts ([(v, Language.Val 0) | v <- vs] ++ [(name, SubProgram stmt) | (name, stmt) <- subs]) of
         Left err -> return $ RunFailure (show err)
         Right mem -> return $ RunSuccess mem

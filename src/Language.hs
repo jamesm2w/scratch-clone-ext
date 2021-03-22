@@ -1,6 +1,8 @@
 --------------------------------------------------------------------------------
 -- Functional Programming (CS141)                                             --
--- Coursework 2: Scratch clone                                                --
+-- Coursework 2: Scratch clone : Extended Edition                             --
+--------------------------------------------------------------------------------
+-- Extensions in this file: language extensions defined in src/Language.hs
 --------------------------------------------------------------------------------
 
 -- | This module contains the types for the abstract syntax tree.
@@ -32,40 +34,41 @@ data Stmt
         repeatTimesExpr :: Expr,
         repeatBody      :: [Stmt]
     }
-    | DefSubroutine {
+    | DefSubroutine { -- Defines a new subroutine in memory
         routineName    :: String,
         routineProgram :: Program
     }
-    | CallSubroutine {
+    | CallSubroutine { -- Calls a subroutine in memory with list of input params
         subName  :: String,
         subInput :: [(String, Expr)]
     }
-    | SubroutineReturn {
+    | SubroutineReturn { -- Returns a value from a subroutine
         returnValue :: Expr
     }
-    | ReturnIf {
+    | ReturnIf { -- Exits from a subroutine if a predicate is truthy
         returnPredicate :: Expr
     }
-    | ReturnIfValue {
+    | ReturnIfValue { -- Exits from a subroutine with a value if predicate is truthy
         returnPredicate :: Expr,
         returnValue :: Expr
     }
-    | RepeatUntilStmt {
+    | RepeatUntilStmt { -- Repeats a program until predicate is truthy
         repeatPredicate :: Expr,
         repeatBody :: [Stmt]
     }
-    | RepeatWhileStmt {
+    | RepeatWhileStmt { -- Repeats a program while a predicate is truthy
         repeatPredicate :: Expr,
         repeatBody :: [Stmt]
     }
-    | CountStmt {
+    | CountStmt { -- Counts with a variable from an initial limit, to an upper limit with increment
         countVar :: String,
         countInitial :: Expr,
         countLimit :: Expr,
         countIncrement :: Expr,
         countBody :: [Stmt]
     }
-    | ControlStmt {
+    | ControlStmt { -- Stops execution of a loop. If the break value is False then 
+                    --  it just continues to the next iteration
         controlBreak :: Bool
     }
     deriving (Eq, Show)
@@ -93,7 +96,7 @@ data Expr
     = ValE Int
     | VarE String
     | BinOpE Op Expr Expr
-    | CallFunction String [(String, Expr)]
+    | CallFunction String [(String, Expr)] -- Call function with a return value with list of inputs.
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------

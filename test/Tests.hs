@@ -1,6 +1,9 @@
 --------------------------------------------------------------------------------
 -- Functional Programming (CS141)                                             --
--- Coursework 2: Scratch clone                                                --
+-- Coursework 2: Scratch clone : Extended Edition                             --
+--------------------------------------------------------------------------------
+-- Extensions in this file: Minor tweaks to tests to make
+--      them work with new memory types
 --------------------------------------------------------------------------------
 
 {-# LANGUAGE ScopedTypeVariables #-}

@@ -1,6 +1,11 @@
 --------------------------------------------------------------------------------
 -- Functional Programming (CS141)                                             --
--- Coursework 2: Scratch clone                                                --
+-- Coursework 2: Scratch clone : Extended Edition                             --
+--------------------------------------------------------------------------------
+-- Extensions in this file:
+--      Lots of parsers for extended functionality defined in src/Interpreter.hs 
+--          & src/Language.hs
+--      Parsing only from start blocks. Also parsing shadow blocks correctly.
 --------------------------------------------------------------------------------
 
 {-# LANGUAGE OverloadedStrings #-}
@@ -32,7 +37,7 @@ import Language
 data Doc = Doc {
     docVars        :: [String],           -- ^ A list of variable names.
     docProgram     :: Program,            -- ^ The program.
-    docSubroutines :: [(String, Stmt)] -- ^ Any attached subroutines to the program
+    docSubroutines :: [(String, Stmt)]    -- ^ Any attached subroutines to the program
 } deriving Show
 
 --------------------------------------------------------------------------------
@@ -221,12 +226,12 @@ parseControlIf e = do
     p <- parseNext e
     return $ IfStmt cond blk alts els : p
 
--- | Parses a call to a subroutine which would return a function.
--- This evaluates all exprs passed as arguments as well.
+-- | Parses a call to a function which returns a value
+-- requires the name, and any arguments to equal number of arguments on function.
 parseCallReturn :: Parser Element Expr
 parseCallReturn e = do
     let mutators = elementsByName "mutation" (elementNodes e)
-    let subname = mapM (\x -> unpack <$> M.lookup "name" (elementAttributes x)) mutators
+    let subname = mapM (\x -> unpack <$> M.lookup "name" (elementAttributes x)) mutators -- finds name
     name <- case subname of
         Nothing    -> throwE "Subroutine name is undefined."
         Just []    -> throwE "Subroutine name is undefined."
@@ -237,17 +242,16 @@ parseCallReturn e = do
     let argValues = Prelude.concat $
          mapM (elementsByName "block" . elementNodes) $ elementsByName "value" (elementNodes e)
 
-    argExprs <- mapM parseExpr argValues
+    argExprs <- mapM parseExpr argValues -- parse arguments into expressions
 
-    when (Prelude.length args /= Prelude.length argNames) $ 
+    when (Prelude.length args /= Prelude.length argNames) $ -- if lengths don't match then something's gone wrong
         throwE $ "Number of arguments don't match parameters in " ++ name
         
-    let xs = Prelude.zip argNames argExprs
-    --traceM $ "cr: " ++ show name
-    --traceM $ "xs: " ++ show xs
+    let xs = Prelude.zip argNames argExprs -- join argument names with their expressions.
     return $ CallFunction name xs
 
--- TODO: this.
+-- | Defines a new subroutine. This is agnostic of whether there is a return value or not
+-- Requires a name, as well as a stack value for the actuall function "code"
 parseDefSubroutine :: Parser Element Stmt
 parseDefSubroutine e = do
     name <- field "NAME" (elementNodes e)
@@ -256,17 +260,16 @@ parseDefSubroutine e = do
     stmts <- case stack of
         Nothing -> pure []
         Just [] -> pure []
-        Just (x:_) -> mapM parseStmt (blocksAndShadows (elementNodes x)) 
+        Just (x:_) -> mapM parseStmt (blocksAndShadows (elementNodes x)) -- parse the stack into the stmt list.
 
-    --traceM $ show stmts
     retE <- value "RETURN" (elementNodes e)
     ret <- case retE of 
-        Nothing -> pure []
-        Just expr -> pure [SubroutineReturn expr]
+        Nothing -> pure [] -- If we have no return value, no extra operations need to happen
+        Just expr -> pure [SubroutineReturn expr] -- but if there is a value, the final stmt is to return that value
 
     return $ DefSubroutine (unpack name) $ Prelude.concat stmts ++ ret
 
--- TODO: this.
+-- | Defines a new call to a function which does not have a return value
 parseCallNoReturn :: Parser Element Program
 parseCallNoReturn e = do
     let mutators = elementsByName "mutation" (elementNodes e)
@@ -287,12 +290,11 @@ parseCallNoReturn e = do
         throwE $ "Number of arguments don't match parameters in " ++ name    
     let xs = Prelude.zip argNames argExprs
 
-    --traceM $ "cnr: " ++ show name
-    --traceM $ "xs: " ++ show xs
     p <- parseNext e
     return $ CallSubroutine name xs : p
 
 -- | Parses a return statement with a predicate
+-- Enforces presence of a CONDITION value and a value for whether there is an attached value.
 parseReturnStmt :: Parser Element Program
 parseReturnStmt e = do
     p <- parseNext e
@@ -313,12 +315,15 @@ parseReturnStmt e = do
             return $ ReturnIf condE : p
 
 -- | Parse a modulo expression block
+-- Requires the DIVIDEND and DIVISOR values.
 parseMathModulo :: Parser Element Expr
 parseMathModulo e = do 
     dividendE <- force "DIVIDEND is required" $ value "DIVIDEND" (elementNodes e)
     divisorE <- force "DIVISOR is required" $ value "DIVISOR" (elementNodes e) 
     return $ BinOpE Mod dividendE divisorE
 
+-- | Parse a while/until loop. Enforces that there is a "BOOL" value which is the predicate for the loop
+-- As well as a "MODE" field which controls which type of loop it is.
 parseWhileUntil :: Parser Element Program
 parseWhileUntil e = do 
     p <- parseNext e
@@ -331,6 +336,8 @@ parseWhileUntil e = do
         _ -> throwE "Mode not recognised"
     return $ stmt : p
 
+-- | Parse a for loop (count) statement into the program. Enforces the presence of the limits
+-- and increment values.
 parseForStmt :: Parser Element Program
 parseForStmt e = do
     p <- parseNext e
@@ -341,10 +348,11 @@ parseForStmt e = do
     block <- statement "DO" e
     return $ CountStmt (unpack variableE) fromE toE byE block : p
 
+-- | Parses a break statement in the program. Doesn't validate if the break is in a loop or not.
 parseBreakStmt :: Parser Element Program
 parseBreakStmt e = do
     p <- parseNext e
-    t <- field "FLOW" (elementNodes e)
+    t <- field "FLOW" (elementNodes e)  
     return $ ControlStmt (unpack t == "BREAK") : p
 
 -- | Parses the body of an expression block.
@@ -392,6 +400,8 @@ parseStmt e@Element {..} = case M.lookup "id" elementAttributes of
         Nothing -> throwE "Block is missing attribute: type"
         Just ty -> parseStmtTy ty e
 
+-- | Parse a subroutine statement. Two options:
+--  if it has a return value or not.
 parseSubroutine :: Parser Element Stmt
 parseSubroutine e@Element {..} = case M.lookup "id" elementAttributes of 
     Nothing -> throwE $ "Block (subroutine) " ++ unpack (nameLocalName elementName) ++ " is missing attribute: id"
@@ -408,9 +418,9 @@ parseDoc Element {..} = do
     ve <- require "Variables section is missing!" $
             element "variables" elementNodes
     vs   <- parseVars ve
-    bs   <- mapM parseStmt (startElements elementNodes) --(elementsByName "block" elementNodes)) -- TODO: only parse the entry point and ignore everything else
-    subs <- mapM parseSubroutine (procedureElements elementNodes)
-    let memory = Prelude.map (\s@(DefSubroutine n _) -> (n, s)) subs
+    bs   <- mapM parseStmt (startElements elementNodes) -- Parses all blocks attached to the start node.
+    subs <- mapM parseSubroutine (procedureElements elementNodes) -- parse all subroutine definition blocks in the XML
+    let memory = Prelude.map (\s@(DefSubroutine n _) -> (n, s)) subs -- pass the subroutines back into the Main script
 
     return $ Doc vs (Prelude.concat bs) memory
 
